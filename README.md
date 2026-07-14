@@ -87,17 +87,27 @@ The server is set to 8 GB, which is comfortable for a normal group. To change it
 
 ## 🔄 Updating
 
+The version is pinned in `docker-compose.yaml` (the `image:` line ends in `42.19.0-unstable`), so it won't change on its own. That's on purpose: a surprise Build 42 patch can break your save. To update when you're ready, back up `server-data/Zomboid` first, bump that tag to the newer build, then run:
+
 ```bash
 docker compose pull && docker compose up -d --force-recreate
 ```
 
-The server is baked into the image, so a fresh pull *is* the update. Your world in `server-data/` is untouched. Build 42 is still a beta, so updates can occasionally break saves — keep backups.
+Your world in `server-data/` is untouched by the swap. Build 42 is still a beta, so updates can occasionally break saves. Keep backups.
 
 ## 💾 Backups
 
 Everything the server writes lives in `server-data/`. The one to back up is `server-data/Zomboid/` — that's your world, saves, and players. Copy it somewhere safe now and then.
 
-For a guaranteed save before stopping, run `docker attach pz`, type `save`, then `quit`. (To detach without stopping: `Ctrl-P` then `Ctrl-Q`.)
+**Turn on autosave (do this once).** Out of the box the world only saves when players leave or you shut down cleanly, so a crash can cost you the whole session. Stop the server, open `server-data/Zomboid/Server/<your-server-name>.ini`, change `SaveWorldEveryMinutes=0` to `15`, and start it again:
+
+```bash
+docker compose stop pz
+# edit the .ini, then:
+docker compose start pz
+```
+
+For a guaranteed save before stopping, run `docker compose run --rm rcon save`, then stop. (Or the manual way: `docker attach pz`, type `save`, then `quit`; detach without stopping with `Ctrl-P` then `Ctrl-Q`.)
 
 ## 🧹 Starting over
 

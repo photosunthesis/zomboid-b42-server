@@ -47,22 +47,33 @@
 #    tunnel covers 2 ports).
 #
 # ── UPDATING (new B42 patch) ─────────────────────────────────────────────────
+# The pz image tag below is now PINNED, so `docker compose pull` won't bump the
+# version on its own. To update: back up ./server-data/Zomboid, bump the pz image
+# tag below to the new build, then:
 #   docker compose pull && docker compose up -d --force-recreate
-# The install is in the image, so a fresh pull IS the update. Your world in
-# ./server-data/ is untouched. If clients auto-updated to a B42 patch newer than
-# danixu has published yet, they can't join until the image catches up — pin a
-# specific tag (e.g. :42.19.0-unstable) below if you want to freeze the version.
+# Your world in ./server-data/ is untouched by the swap. If clients auto-update to
+# a B42 patch newer than the pinned tag, they can't join until you bump it (that
+# controlled lag is the point of pinning).
 #
 # NOTE: Compose reads .env from this directory for BOTH the ${...} substitutions
 # below AND the pz container's own environment (via env_file, format: raw).
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Cap Docker's json-file logs so a stack that runs for weeks can't fill the disk.
+# The default is unlimited size with no rotation. Both services share this anchor.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   pz:
     # Prebuilt Build 42 server (server files baked in; no SteamCMD at runtime).
-    # Pin to a specific patch for reproducibility, e.g. :42.19.0-unstable.
+    # Pinned to the B42 build this world was created on so a routine `pull` can't
+    # drop in a save-incompatible patch. Bump deliberately (back up first).
     # For Build 41 stable instead, use :latest (or :latest-release).
-    image: danixu86/project-zomboid-dedicated-server:latest-unstable
+    image: danixu86/project-zomboid-dedicated-server:42.19.0-unstable
     container_name: ${NAME:-pz}
 
     # danixu86 publishes amd64 only. This pins amd64 regardless of host arch:
@@ -135,6 +146,55 @@ services:
     # across a runtime restart).
     restart: unless-stopped
 
+    # ── Resilience + hardening (added) ───────────────────────────────────────
+    # Liveness signal. RCON (27015/tcp) only starts listening after the world
+    # finishes loading, so a passing check means "actually up", not just booting.
+    # The image ships bash but no netcat, so probe with bash's /dev/tcp builtin.
+    # Heads up: on standalone Docker/OrbStack an "unhealthy" status does NOT
+    # restart the container (the restart policy fires only when the process exits).
+    # This is for `docker ps` visibility; see the commented autoheal block to act on it.
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/127.0.0.1/27015'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+    # Block privilege escalation via setuid binaries. Safe here: the entrypoint's
+    # root -> steam `su` is a privilege DROP, which this flag doesn't touch.
+    security_opt:
+      - no-new-privileges:true
+
+    # PZ uses ordinary UDP/TCP sockets, never raw sockets. Dropping NET_RAW also
+    # disables `ping` from inside the container (use nc/curl to debug the bridge).
+    cap_drop:
+      - NET_RAW
+
+    # Bound the process/thread blast radius; give the JVM plenty of file handles.
+    # pids_limit counts THREADS, not processes, so keep it generous (an emulated
+    # JVM plus steam runs into the hundreds). Do NOT lower toward 512/1024 or the
+    # server can crash with "unable to create native thread".
+    pids_limit: 4096
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+    # Reap orphaned children (the entrypoint su's to a child and never exec's).
+    # This does NOT change stop behavior: SIGTERM still isn't relayed to the JVM,
+    # so a guaranteed save still needs RCON `save` (see the `rcon` service below).
+    init: true
+
+    logging: *default-logging
+
+    # Let the autoheal sidecar (below) restart pz if the healthcheck goes
+    # unhealthy. stop.timeout matches stop_grace_period; the restart is a SIGKILL
+    # after that (this image ignores SIGTERM), so a FALSE unhealthy costs progress
+    # back to the last autosave.
+    labels:
+      autoheal: "true"
+      autoheal.stop.timeout: "120"
+
   playit:
     # Official headless playit.gg agent, PINNED so a `docker compose pull` can't
     # silently swap in a regressed build. 1.0.10 (2026-06-08) is the current, healthy
@@ -172,6 +232,63 @@ services:
     # Match pz: always-on, survives crashes / runtime restart / host reboot.
     # See the pz `restart:` note above for the host requirements (any OS/runtime).
     restart: unless-stopped
+
+    # ── Hardening (added) ────────────────────────────────────────────────────
+    # The internet-facing tunnel is the piece most worth confining. It's a single
+    # outbound-only agent: it needs zero Linux capabilities and writes nothing to
+    # disk except its IPC socket under /run (so /run is a tmpfs and the rest is
+    # read-only). Verified against the pinned 1.0.10 agent. If a future image bump
+    # crash-loops at boot it started writing somewhere new; add a tmpfs line for it.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /run
+    logging: *default-logging
+
+  # ── On-demand RCON (added; never autostarts) ────────────────────────────────
+  # The image doesn't save on SIGTERM, so a plain `stop` leans on autosave. This
+  # profile-gated helper flushes the world to disk on demand and never starts with
+  # `up` (profiles: [tools]). For a guaranteed-save stop:
+  #   docker compose run --rm rcon save    # flush world + player DB to disk
+  #   docker compose stop pz               # the kill is now harmless; save is on disk
+  # Don't use `quit`: pz is restart: unless-stopped, so a quit-exit looks like a
+  # crash and Docker relaunches pz before you can stop it. Confirm RCON is live with:
+  #   docker compose run --rm rcon players
+  # (RCONPASSWORD comes from .env via compose interpolation; if yours contains a
+  #  literal `$`, double it to `$$` here or the value won't match.)
+  rcon:
+    image: outdead/rcon:latest
+    profiles: ["tools"]
+    networks:
+      - tnc
+    entrypoint: ["/rcon", "-a", "172.28.0.10:27015", "-p", "${RCONPASSWORD}"]
+
+  # ── Auto-restart a HUNG pz (autoheal) ───────────────────────────────────────
+  # restart: unless-stopped already covers a crash/OOM (the process exits and
+  # Docker relaunches it). The one gap it can't see is a server that's alive but
+  # deadlocked. autoheal watches pz's healthcheck and restarts pz when it goes
+  # "unhealthy". Two tradeoffs to know:
+  #   1. It mounts the Docker socket = root-equivalent access to the host.
+  #   2. The restart is a SIGKILL (this image ignores SIGTERM), so a FALSE unhealthy
+  #      loses progress back to the last autosave. The healthcheck's generous
+  #      start_period (600s) keeps a slow emulated boot reading as "starting", not dead.
+  # Scoped to the `autoheal: "true"` label on pz, so it only ever touches pz.
+  autoheal:
+    image: willfarrell/autoheal:latest
+    container_name: ${NAME:-pz}-autoheal
+    depends_on: [pz]
+    restart: unless-stopped
+    network_mode: none
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: 10
+      AUTOHEAL_START_PERIOD: 300
+      AUTOHEAL_DEFAULT_STOP_TIMEOUT: 120
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
 # ── Private bridge shared by pz + playit ─────────────────────────────────────
 # The explicit subnet is what lets pz claim a fixed ipv4_address (172.28.0.10)
