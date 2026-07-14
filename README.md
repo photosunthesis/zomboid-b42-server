@@ -1,144 +1,119 @@
-# 🧟 Project Zomboid B42 Dedicated Server
+# 🧟 Project Zomboid Server (Build 42)
 
-A dead-simple **Project Zomboid (Build 42) dedicated server** that runs on **any OS with any container runtime**, exposed to friends over the internet through a [playit.gg](https://playit.gg) tunnel — **no router port-forwarding, no public IP, no custom build.**
+Run a Project Zomboid multiplayer server on your own computer and let friends join over the internet. No router setup, no static IP, no fussy install. Works on Mac (including Apple Silicon), Windows, or Linux.
 
-Everything lives in two files: [`docker-compose.yaml`](docker-compose.yaml) and your `.env`. 🎉
-
----
+Everything lives in two files: `docker-compose.yaml` (the setup, you don't touch it) and `.env` (your settings).
 
 ## 🧰 What you need
 
-- 🐳 **A container runtime that speaks Compose** — Docker, OrbStack, or whatever you prefer. If it can run a `compose` file, it can run this.
-- 🎟️ A free **[playit.gg](https://playit.gg)** account (for the tunnel)
-- 💾 ~8–16 GB RAM to spare — B42 multiplayer is hungry
-- 💻 Any OS — Linux, macOS (Intel or Apple Silicon), or Windows
+- A computer you can leave running while people play.
+- About 8 GB of free RAM. Small group? You can drop it to 4 GB (see [Adjusting RAM](#adjusting-ram)).
+- A free [playit.gg](https://playit.gg) account. This is what lets friends connect over the internet.
+- About 15 minutes.
 
-> 📝 **Commands below use `docker compose`.** If your runtime uses a different invocation, just substitute it — the compose file itself is standard and doesn't care which runtime brings it up.
+## 🚀 Setup
 
----
+### 1. 🐳 Install a container runtime
 
-## 🍏 Why it runs anywhere
+This runs the server in a self-contained box, so you don't have to install Java, Steam, or anything game-related by hand. Pick one and install it, then open it once so it's running:
 
-Project Zomboid's server is x86-only, and it's normally installed by **SteamCMD** — whose bootstrap is a **32-bit x86 binary**. That install step is the fragile part, especially on **ARM64 hosts** (Apple Silicon, Raspberry Pi, ARM cloud VMs), where a 32-bit x86 binary can't be emulated cleanly. 💥
+- **Mac:** [OrbStack](https://orbstack.dev) (lighter) or [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+- **Windows / Linux:** [Docker Desktop](https://www.docker.com/products/docker-desktop/).
 
-This setup sidesteps the problem entirely:
+The commands below use `docker compose`. If you picked a different runtime, swap in its command.
 
-- 📦 It uses the **[danixu86 prebuilt image](https://hub.docker.com/r/danixu86/project-zomboid-dedicated-server)** with the server files **baked in at build time** (SteamCMD ran on danixu's amd64 CI, not on your machine).
-- ⚙️ At runtime, only the **64-bit Java server** runs — no SteamCMD — so the same image behaves identically everywhere:
-  - 🟢 On **x86-64 hosts** (most PCs & servers, Intel Macs) it runs **natively**.
-  - 🟡 On **ARM64 hosts** it runs under lightweight emulation — and, crucially, *works at all*, because you never have to run the 32-bit SteamCMD bootstrap.
-- 🚇 A **playit.gg agent** rides alongside on a private bridge network and forwards internet traffic to the server. Your friends get a public address; your router stays untouched.
+### 2. 🎟️ Get your playit key
 
----
+playit.gg gives your server a public address so friends can join without you touching your router.
 
-## 🚀 Quick start
-
-```bash
-cp .env.example .env          # then edit it (playit key, passwords, ...)
-docker compose up -d          # pull images + start in the background
-docker compose logs -f        # watch the logs (first boot loads the world)
-docker compose down           # stop + remove containers (world data persists)
-```
-
-First boot takes a bit while the world generates. ⏳ Once you see the server settle in the logs, you're live.
-
----
-
-## 🔑 Configuration
-
-All settings live in **`.env`** (copied from [`.env.example`](.env.example)). The essentials:
-
-| Variable | What it does |
-|---|---|
-| `PLAYIT_SECRET_KEY` | 🎟️ Secret for the headless playit agent (see below) |
-| `SERVERNAME` | 🏷️ Server name |
-| `PASSWORD` | 🔒 Password friends type to join |
-| `ADMINPASSWORD` | 👑 In-game admin login — **mandatory**, server won't start without it |
-| `RCONPASSWORD` | 🎛️ Remote console password |
-| `MAX_MEMORY` | 🧠 Java heap (B42 MP wants a lot — 12G is generous) |
-| `MOD_IDS` / `WORKSHOP_IDS` | 🧩 Steam Workshop mods (optional — see caveat below) |
-
-> ⚠️ **Values are passed to the container literally** (`env_file` uses `format: raw`). Don't put a trailing `# comment` on a `KEY=VALUE` line — the whole thing after `=` becomes the value. Keep comments on their own lines. (The `env_file` long syntax needs a reasonably recent Compose implementation; any current runtime is fine.)
-
-### 🎟️ Getting your playit key
-
-Generate a **Docker** agent secret from this direct link (easy to miss in the site's menus):
+Open this exact link, sign up (free), name the agent, and copy the secret it shows you:
 
 ```
 https://playit.gg/account/setup/wizard/new-account/docker/docker-name
 ```
 
-Name the agent, copy the secret, paste it into `PLAYIT_SECRET_KEY`. (This is the "Docker" path — it works with any runtime; the click-a-claim-URL flow is playit's *desktop* app, which is a different thing.)
+Use that link. It's the "Docker" path and it's easy to miss in their menus. (The playit desktop app is a separate thing you don't need.)
 
----
+### 3. ⚙️ Fill in your settings
 
-## 🎮 How friends connect
+In this folder, make your own copy of the example settings:
 
-1. In the **playit.gg dashboard**, create **one** tunnel:
-   - **Type** = `Project Zomboid` (or: Protocol **UDP**, Port Count **2**)
-   - **Local address** = `172.28.0.10`  **Local port** = `16261`
+```bash
+cp .env.example .env
+```
 
-   > 📌 `172.28.0.10` is the server's fixed IP on the private bridge. The agent has no DNS, so this must be the literal IP — a service name like `pz` will **not** work.
+Open `.env` in any text editor and set at least these:
 
-   playit gives you a public address like `something.playit.gg:PORT`.
+- `PLAYIT_SECRET_KEY` — paste the key from step 2.
+- `PASSWORD` — what friends type to join.
+- `ADMINPASSWORD` — your admin login. The server won't start without it.
 
-2. **In-game:** `Join → Add Server / connect by IP` → enter that host + public port, **uncheck "Use Steam Relay"**, and join with your `PASSWORD`.
+One rule: don't put a `# comment` at the end of a `KEY=value` line. Everything after the `=` becomes the value. Keep notes on their own lines.
 
-   > 🔢 Give friends only the **first** port — PZ uses the `+1` port itself (that's why the tunnel covers 2 ports).
+### 4. ▶️ Start the server
 
----
+Open a terminal in this folder and run:
 
-## 🔄 Updating to a new B42 patch
+```bash
+docker compose up -d      # download + start in the background
+docker compose logs -f    # watch it boot (first run builds the world, takes a few minutes)
+```
+
+When the logs go quiet and steady, it's live. Press `Ctrl-C` to stop watching — the server keeps running.
+
+To stop the server later: `docker compose down`. Your world is saved.
+
+### 5. 🚇 Open the tunnel
+
+In the [playit.gg dashboard](https://playit.gg), create **one** tunnel:
+
+- **Type:** Project Zomboid (or set Protocol **UDP**, Port Count **2**)
+- **Local address:** `172.28.0.10`   **Local port:** `16261`
+
+It gives you a public address like `something.playit.gg:PORT`. Type `172.28.0.10` exactly — a name won't work.
+
+### 6. 🎮 Connect in-game
+
+You and your friends open Project Zomboid → **Join → Add Server / connect by IP**, enter the playit address and port, **uncheck "Use Steam Relay"**, and join with the `PASSWORD`.
+
+Give friends only the **first** port number. The game uses the next one on its own.
+
+## 🧠 Adjusting RAM
+
+The server is set to 8 GB, which is comfortable for a normal group. To change it, edit these in `.env`:
+
+- `MAX_MEMORY=8192m` — the game's memory. Drop to `4096m` if it's just a few of you.
+- `CONTAINER_MEMORY=10g` — keep this a little above `MAX_MEMORY` (use `6g` if you dropped to 4 GB).
+
+## 🔄 Updating
 
 ```bash
 docker compose pull && docker compose up -d --force-recreate
 ```
 
-The server install lives in the image, so **a fresh pull *is* the update**. Your world in `./server-data/` is untouched. 🌍
+The server is baked into the image, so a fresh pull *is* the update. Your world in `server-data/` is untouched. Build 42 is still a beta, so updates can occasionally break saves — keep backups.
 
-> 🧪 **B42 is a beta (unstable) branch.** Expect bugs, updates can occasionally break saves, keep the group small (Indie Stone suggests ≤ 20 + whitelisting), and give it plenty of RAM. If clients auto-update to a patch newer than danixu has published, they can't join until the image catches up — pin a specific image tag (e.g. `:42.19.0-unstable`) in `docker-compose.yaml` to freeze the version.
+## 💾 Backups
 
----
+Everything the server writes lives in `server-data/`. The one to back up is `server-data/Zomboid/` — that's your world, saves, and players. Copy it somewhere safe now and then.
 
-## 💾 Backups & persistent data
+For a guaranteed save before stopping, run `docker attach pz`, type `save`, then `quit`. (To detach without stopping: `Ctrl-P` then `Ctrl-Q`.)
 
-Everything the server writes lives in **`./server-data/`** (bind-mounted, survives `down` and image updates):
-
-- `Zomboid/` — 🌍 your world, saves, server `.ini`, player DB, logs → **this is what you back up**
-- `workshop/` — 🧩 downloaded Steam Workshop mods
-
-> 💡 **For a guaranteed save before stopping:** the image doesn't trap `SIGTERM`, so a plain `docker compose stop` relies on PZ's autosave (you may lose a few minutes). To force it: `docker attach pz`, type `save` then `quit`. Detach without stopping with `Ctrl-P` `Ctrl-Q`.
-
----
-
-## 🧹 Starting fresh
-
-To wipe the world and start over, bring the stack down and remove the persisted data:
+## 🧹 Starting over
 
 ```bash
-docker compose down            # stop + remove containers and the compose network
+docker compose down
 rm -rf server-data/Zomboid server-data/workshop
 ```
 
-⚠️ This is **permanent** — world saves, logs, and workshop mods all go.
+This is permanent. The world, saves, and mods are gone.
 
----
+## 🍏 Why this works anywhere
 
-## 🩹 Troubleshooting
-
-- **😱 Scary playit ERROR lines on startup** (`Network unreachable` / `failed to ping tunnel server` on an IPv6 address) — **benign.** The container has no IPv6, so the agent's first (IPv6) control-server candidate fails instantly and falls through to IPv4. You'll see `playit connected; tunnels loaded` right after.
-- **🛌 Server dies while you're away** — almost always the **host slept, rebooted, or the runtime didn't restart**. Two things to check on any machine you use as a server:
-  1. **Keep the host awake** — a sleeping machine suspends the whole container runtime, and no restart policy can help. Disable sleep in your OS power settings (or use a keep-awake utility for your platform).
-  2. **Make the runtime start on boot / login**, so the `restart:` policy in the compose file can actually bring the stack back. If your runtime doesn't auto-start the stack after *its own* restart, switch both services to `restart: always` in `docker-compose.yaml`.
-- **🚪 Friends can't join** — double-check the tunnel's Local address is `172.28.0.10:16261`, that they **unchecked "Use Steam Relay"**, and that they're using the **first** public port. Try flipping `NOSTEAM` in `.env`.
-- **🧩 Mods won't download** — Workshop mods need SteamCMD (`FORCEUPDATE=True`), which hits the same 32-bit path that's unreliable on ARM64 hosts. A vanilla server needs none of this.
-
----
+Project Zomboid's server is normally a pain to install, especially on Apple Silicon. This uses a prebuilt image with the server already inside, so your computer never runs the fragile install step. It just runs the game. That's the whole trick. (The gory details are in the comments of `docker-compose.yaml` if you're curious.)
 
 ## 🔐 A note on secrets
 
-`.env` (your playit key + passwords) and `server-data/` are **gitignored** — they never get committed. Keep it that way. 🙈
+Your `.env` (key and passwords) and `server-data/` are never committed to git. Keep it that way.
 
----
-
-Happy surviving. 🧟🔨
+Happy surviving. 🧟
