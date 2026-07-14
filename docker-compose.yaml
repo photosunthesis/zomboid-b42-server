@@ -1,0 +1,188 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Project Zomboid (Build 42) dedicated server + playit.gg tunnel.
+#
+# TWO prebuilt images, NO custom build. Everything lives in this file + .env:
+#   • pz     — the game server (danixu86 image, Build 42 "unstable" branch)
+#   • playit — the playit.gg tunnel agent on a private bridge network with pz; it
+#              forwards internet traffic to the server at pz's fixed container IP
+#              (172.28.0.10). No published host ports, no router port-forwarding.
+#
+# Runtime-agnostic: this is a standard Compose file. Bring it up with Docker,
+# OrbStack, or any other Compose-compatible runtime — the file doesn't care which.
+#
+# ── Why this runs on any CPU architecture ────────────────────────────────────
+# Project Zomboid's server is x86-only and is installed by SteamCMD, whose
+# bootstrap is a 32-bit x86 binary. Installing it is the fragile part — on ARM64
+# hosts (Apple Silicon, Raspberry Pi, ARM cloud) that 32-bit x86 bootstrap can't
+# be emulated cleanly. THIS image sidesteps that: the danixu86 image has the
+# server BAKED IN at build time (the SteamCMD install ran on danixu's amd64 CI,
+# not on your host). At runtime only the 64-bit Java server runs — no SteamCMD —
+# as long as FORCEUPDATE is unset. So the same image "just runs" everywhere:
+# native on x86-64 hosts, and under lightweight emulation on ARM64.
+#
+# ── Build 42 is a BETA (unstable) branch ─────────────────────────────────────
+# B42 multiplayer lives on Steam's "unstable" branch. It works but: expect bugs,
+# updates can break saves, keep the group small (Indie Stone suggests <= 20 and
+# whitelisting), and give it plenty of RAM (8–9 GB+). To update the server, pull
+# a fresh image (see UPDATING below) — that re-fetches danixu's newest B42 build.
+#
+# ── Quick start ──────────────────────────────────────────────────────────────
+#   cp .env.example .env          # then edit it (playit key, passwords, ...)
+#   docker compose up -d          # pull images + start in the background
+#   docker compose logs -f        # watch the logs (first boot loads the world)
+#   docker compose down           # stop + remove containers (world data persists)
+#
+# ── How friends connect ──────────────────────────────────────────────────────
+# 1. In the playit.gg dashboard create ONE tunnel:
+#      Type = Project Zomboid  (or: Protocol UDP, Port Count 2)
+#      Local address = 172.28.0.10   Local port = 16261
+#    (172.28.0.10 = pz's fixed IP on the private bridge defined at the BOTTOM of
+#    this file. The agent has NO DNS, so this must be that literal IP — a service
+#    name like "pz" will NOT work. It used to be 127.0.0.1 when playit shared pz's
+#    network namespace; that's changed — update the dashboard to this IP.)
+#    playit gives you a public address like  something.playit.gg:PORT
+# 2. In-game: Join → Add Server / connect by IP → enter that host + public port,
+#    UNCHECK "Use Steam Relay", and join with your SERVER_PASSWORD.
+#    Give friends only the FIRST port; PZ uses the +1 port itself (that's why the
+#    tunnel covers 2 ports).
+#
+# ── UPDATING (new B42 patch) ─────────────────────────────────────────────────
+#   docker compose pull && docker compose up -d --force-recreate
+# The install is in the image, so a fresh pull IS the update. Your world in
+# ./server-data/ is untouched. If clients auto-updated to a B42 patch newer than
+# danixu has published yet, they can't join until the image catches up — pin a
+# specific tag (e.g. :42.19.0-unstable) below if you want to freeze the version.
+#
+# NOTE: Compose reads .env from this directory for BOTH the ${...} substitutions
+# below AND the pz container's own environment (via env_file, format: raw).
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  pz:
+    # Prebuilt Build 42 server (server files baked in; no SteamCMD at runtime).
+    # Pin to a specific patch for reproducibility, e.g. :42.19.0-unstable.
+    # For Build 41 stable instead, use :latest (or :latest-release).
+    image: danixu86/project-zomboid-dedicated-server:latest-unstable
+    container_name: ${NAME:-pz}
+
+    # danixu86 publishes amd64 only. This pins amd64 regardless of host arch:
+    # a no-op (native) on x86-64 hosts, and emulation on ARM64 hosts.
+    platform: linux/amd64
+
+    # Server config (name, passwords, ports, memory, mods) is injected from .env.
+    # `format: raw` passes every value LITERALLY — no ${...} interpolation, no
+    # quote-stripping — so a password with $, spaces, or quotes arrives exactly as
+    # written. Consequence: keep "# comments" on their OWN lines in .env, never
+    # trailing a KEY=VALUE line (the comment would become part of the value).
+    env_file:
+      - path: .env
+        format: raw
+
+    # Persistent data on the host — survives `down` and image updates.
+    #   Zomboid/  = your world, saves, server .ini, player DB, logs  ← BACK THIS UP
+    #   workshop/ = downloaded Steam Workshop mods (only used if you enable mods;
+    #               see MOD_IDS / WORKSHOP_IDS + FORCEUPDATE in .env)
+    # Do NOT mount anything onto the install dir (/home/steam/pz-dedicated) — the
+    # server is baked into the image there; a mount would hide it and break boot.
+    volumes:
+      - ./server-data/Zomboid:/home/steam/Zomboid
+      - ./server-data/workshop:/home/steam/pz-dedicated/steamapps/workshop
+
+    # No `ports:` on purpose — playit reaches pz directly over the private bridge
+    # (at pz's fixed IP), so nothing needs publishing to the host. To ALSO allow
+    # same-LAN direct connections, uncomment these (the tunnel does not need them):
+    # ports:
+    #   - "16261:16261/udp"
+    #   - "16262:16262/udp"
+
+    # Fixed IP on the private bridge (see `networks:` at the BOTTOM of this file).
+    # playit forwards to THIS address; keeping it static means pz can crash, run
+    # out of memory and get killed, or be recreated for an image update without
+    # the tunnel's target ever changing. The PZ server already binds all interfaces (leave its bind
+    # address unset — do NOT set -ip/0.0.0.0, which PZ rejects), so it's reachable
+    # here. No ports: needed for playit — same-bridge containers reach every port.
+    networks:
+      tnc:
+        ipv4_address: 172.28.0.10
+
+    # Resource caps. Keep CONTAINER_MEMORY comfortably above MAX_MEMORY in .env.
+    mem_limit: ${CONTAINER_MEMORY:-16g}
+    cpus: ${CONTAINER_CPUS:-8}
+
+    # Graceful-ish shutdown. Heads up: this image does NOT trap SIGTERM to force a
+    # save, so a plain `docker compose stop` relies on Project Zomboid's autosave
+    # (you may lose the last few minutes). For a GUARANTEED save, use the server
+    # console: `docker attach pz`, type  save  then  quit  (it saves and exits),
+    # or detach without stopping via Ctrl-P Ctrl-Q. stdin_open/tty enable that.
+    stop_grace_period: ${STOP_GRACE:-120}s
+    stdin_open: true
+    tty: true
+
+    # `unless-stopped` = relaunch after a crash, a runtime restart, AND a host reboot,
+    # but stay down after a deliberate `docker compose stop`. This is the single
+    # biggest fix for "the server was offline / playit died overnight": the old
+    # `on-failure` did NOT relaunch after a clean stop or a reboot, so the stack
+    # stayed down until manually restarted. Two host-level requirements for reboot
+    # recovery to actually work, on ANY OS/runtime:
+    #   1. The container runtime must start on boot/login (a restart policy only fires
+    #      once the runtime is back up). Enable "start at login" for a desktop runtime,
+    #      or the equivalent service on a Linux host.
+    #   2. Keep the host awake — a sleeping machine suspends the whole runtime and NO
+    #      restart policy can help. Disable sleep in your OS power settings on any box
+    #      you leave running as a server.
+    # If your runtime doesn't auto-start this stack after ITS OWN restart, switch BOTH
+    # services to `restart: always` (the only downside: a manual `stop` won't persist
+    # across a runtime restart).
+    restart: unless-stopped
+
+  playit:
+    # Official headless playit.gg agent, PINNED so a `docker compose pull` can't
+    # silently swap in a regressed build. 1.0.10 (2026-06-08) is the current, healthy
+    # release; bump deliberately after checking the tags on GitHub's Container
+    # Registry (GHCR). (Use :1.0 instead if you want automatic patch-level
+    # updates within the 1.0.x line.)
+    image: ghcr.io/playit-cloud/playit-agent:1.0.10
+    container_name: ${NAME:-pz}-playit
+
+    # On the SAME private bridge as pz, but with its OWN network stack (no longer
+    # pz's namespace). It reaches the server at pz's fixed IP 172.28.0.10:16261 over
+    # the bridge and gets its own outbound internet to playit.gg. Decoupled lifecycle
+    # is the point: pz can restart/recreate without stranding the tunnel (the old
+    # `network_mode: service:pz` silently killed playit's networking whenever pz
+    # cycled, and no restart policy recovered it).
+    networks:
+      - tnc
+
+    # The agent's entrypoint maps SECRET_KEY -> `playitd --secret ...` and adds
+    # --platform-docker automatically. We feed it from PLAYIT_SECRET_KEY in .env.
+    environment:
+      SECRET_KEY: ${PLAYIT_SECRET_KEY}
+      # HARMLESS startup noise, NOT a failure: the two ERROR lines about
+      #   [2602:fbaf:...]:5525 "Network unreachable" / "failed to ping tunnel server"
+      # happen because this container has no IPv6, so the agent's first control-server
+      # candidate (always IPv6) fails instantly and it falls straight through to IPv4
+      # — which is why "playit connected; tunnels loaded" prints right after. There is
+      # no IPv4-only flag in the agent. To silence just those lines (note: this also
+      # hides genuine ping failures from that same module), uncomment:
+      # PLAYIT_LOG: "info,playit_agent_core::agent_control::address_selector=off"
+
+    # Start pz first (ordering only — no longer a hard network dependency).
+    depends_on:
+      - pz
+    # Match pz: always-on, survives crashes / runtime restart / host reboot.
+    # See the pz `restart:` note above for the host requirements (any OS/runtime).
+    restart: unless-stopped
+
+# ── Private bridge shared by pz + playit ─────────────────────────────────────
+# The explicit subnet is what lets pz claim a fixed ipv4_address (172.28.0.10)
+# that the playit tunnel targets. IPv4-only on purpose (container IPv6 is
+# inconsistent across runtimes/hosts). If 172.28.0.0/24 collides with another
+# network on your host, change it here AND update the tunnel's Local address in the
+# playit.gg dashboard to match.
+networks:
+  tnc:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+          gateway: 172.28.0.1

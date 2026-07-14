@@ -1,0 +1,14 @@
+# Secrets — NEVER commit (contains your playit key, admin/RCON passwords)
+.env
+
+# Persisted server data (game install + saves), bind-mounted at runtime
+server-data/
+
+# Claude Code local settings
+.claude/
+
+# macOS cruft
+.DS_Store
+
+# Logs
+*.log
