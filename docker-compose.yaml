@@ -102,9 +102,9 @@ services:
     # No `ports:` on purpose — playit reaches pz directly over the private bridge
     # (at pz's fixed IP), so nothing needs publishing to the host. To ALSO allow
     # same-LAN direct connections, uncomment these (the tunnel does not need them):
-    # ports:
-    #   - "16261:16261/udp"
-    #   - "16262:16262/udp"
+    ports:
+      - "16261:16261/udp"
+      - "16262:16262/udp"
 
     # Fixed IP on the private bridge (see `networks:` at the BOTTOM of this file).
     # playit forwards to THIS address; keeping it static means pz can crash, run
