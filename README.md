@@ -87,13 +87,19 @@ The server is set to 8 GB, which is comfortable for a normal group. To change it
 
 ## 🔄 Updating
 
-The version is pinned in `docker-compose.yaml` (the `image:` line ends in `42.19.0-unstable`), so it won't change on its own. That's on purpose: a surprise Build 42 patch can break your save. To update when you're ready, back up `server-data/Zomboid` first, bump that tag to the newer build, then run:
+The version is pinned in `docker-compose.yaml` (the `image:` line ends in `42.20.0-release`), so it won't change on its own. That's on purpose: a surprise Build 42 patch can break your save. To update when you're ready, back up `server-data/Zomboid` first, bump that tag to the newer build, then run:
 
 ```bash
 docker compose pull && docker compose up -d --force-recreate
 ```
 
-Your world in `server-data/` is untouched by the swap. Build 42 is still a beta, so updates can occasionally break saves. Keep backups.
+A patch-level bump leaves your world in `server-data/` untouched — but read the patch notes first. An update that adds **map content** invalidates existing saves outright, and then the world has to be regenerated rather than migrated. Keep backups.
+
+> **Build 42 is stable now.** As of `42.20.0` (released 2026-07-29) Build 42 ships on Steam's normal branch, so tags end in `-release`, not `-unstable`, and your friends need no beta opt-in — a stock, auto-updating client just connects.
+>
+> Two things this changed:
+> - `:latest` and `:latest-release` now mean **Build 42**, not Build 41. If you specifically want Build 41, pin `41.78.19-release` and have players select Steam's `legacy41` branch.
+> - Worlds made on `42.19.0-unstable` **cannot** load on 42.20 (it added map content). This server's 42.19 world was archived and regenerated on 2026-07-29. To finish an old 42.19 world instead, keep the old tag *and* have every player select Steam's `42.19` branch.
 
 ## 💾 Backups
 

@@ -2,7 +2,7 @@
 # Project Zomboid (Build 42) dedicated server + playit.gg tunnel.
 #
 # TWO prebuilt images, NO custom build. Everything lives in this file + .env:
-#   • pz     — the game server (danixu86 image, Build 42 "unstable" branch)
+#   • pz     — the game server (danixu86 image, Build 42 stable / "release" branch)
 #   • playit — the playit.gg tunnel agent on a private bridge network with pz; it
 #              forwards internet traffic to the server at pz's fixed container IP
 #              (172.28.0.10). No published host ports, no router port-forwarding.
@@ -20,11 +20,18 @@
 # as long as FORCEUPDATE is unset. So the same image "just runs" everywhere:
 # native on x86-64 hosts, and under lightweight emulation on ARM64.
 #
-# ── Build 42 is a BETA (unstable) branch ─────────────────────────────────────
-# B42 multiplayer lives on Steam's "unstable" branch. It works but: expect bugs,
-# updates can break saves, keep the group small (Indie Stone suggests <= 20 and
-# whitelisting), and give it plenty of RAM (8–9 GB+). To update the server, pull
-# a fresh image (see UPDATING below) — that re-fetches danixu's newest B42 build.
+# ── Build 42 is now STABLE (as of 42.20.0, 2026-07-29) ───────────────────────
+# B42 left beta: 42.20.0 shipped to Steam's DEFAULT (public/stable) branch, so the
+# image line moved from "-unstable" to "-release" tags. Players no longer opt into
+# any beta branch — a stock, auto-updated client connects as-is. Still give it
+# plenty of RAM (8–9 GB+) and keep the group modest (Indie Stone suggests <= 20).
+#
+# SAVE COMPATIBILITY: 42.20 added map content, so worlds created on 42.19-unstable
+# CANNOT be loaded by 42.20 — that jump requires a fresh world (this server's
+# 42.19 world was archived and regenerated on 2026-07-29). Build 41 saves are
+# likewise incompatible. To finish an old 42.19 world instead, pin the previous
+# tag below AND have every player opt into Steam's "42.19" branch; for Build 41,
+# use the 41.78.19-release tag plus Steam's "legacy41" branch.
 #
 # ── Quick start ──────────────────────────────────────────────────────────────
 #   cp .env.example .env          # then edit it (playit key, passwords, ...)
@@ -51,9 +58,16 @@
 # version on its own. To update: back up ./server-data/Zomboid, bump the pz image
 # tag below to the new build, then:
 #   docker compose pull && docker compose up -d --force-recreate
-# Your world in ./server-data/ is untouched by the swap. If clients auto-update to
-# a B42 patch newer than the pinned tag, they can't join until you bump it (that
-# controlled lag is the point of pinning).
+# A patch-level bump leaves your world in ./server-data/ untouched. Check the patch
+# notes first, though: an update that adds MAP content invalidates existing saves
+# (that's what 42.19 -> 42.20 did), and then the world must be regenerated, not
+# migrated. If clients auto-update past the pinned tag they can't join until you
+# bump it — that controlled lag is the point of pinning.
+#
+# Do NOT "update" by setting FORCEUPDATE=True in .env on this host: that runs
+# SteamCMD at container start, whose 32-bit x86 bootstrap is exactly the part that
+# doesn't emulate cleanly on ARM64 (see the architecture note above). Bump the tag
+# instead — the whole point of this image is that the server files are baked in.
 #
 # NOTE: Compose reads .env from this directory for BOTH the ${...} substitutions
 # below AND the pz container's own environment (via env_file, format: raw).
@@ -72,8 +86,14 @@ services:
     # Prebuilt Build 42 server (server files baked in; no SteamCMD at runtime).
     # Pinned to the B42 build this world was created on so a routine `pull` can't
     # drop in a save-incompatible patch. Bump deliberately (back up first).
-    # For Build 41 stable instead, use :latest (or :latest-release).
-    image: danixu86/project-zomboid-dedicated-server:42.19.0-unstable
+    #
+    # 42.20.0-release = Build 42 STABLE, published 2026-07-29. Note the "-release"
+    # suffix: B42 graduated off the unstable branch, so the newest B42 no longer
+    # carries an "-unstable" tag. `:latest` and `:latest-release` also point here
+    # now — do NOT use either to mean "Build 41" anymore (that was true only while
+    # B42 was in beta). For Build 41 stable, pin 41.78.19-release explicitly.
+    # Previous pin: 42.19.0-unstable (its world was archived; 42.20 can't load it).
+    image: danixu86/project-zomboid-dedicated-server:42.20.0-release
     container_name: ${NAME:-pz}
 
     # danixu86 publishes amd64 only. This pins amd64 regardless of host arch:
