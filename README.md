@@ -115,6 +115,23 @@ docker compose start pz
 
 For a guaranteed save before stopping, run `docker compose run --rm rcon save`, then stop. (Or the manual way: `docker attach pz`, type `save`, then `quit`; detach without stopping with `Ctrl-P` then `Ctrl-Q`.)
 
+## 🧩 Mods: the one thing that breaks players
+
+Mods come from the Steam Workshop, which is what makes them easy — your players just get them automatically on connect. The catch is that **the server pulls the newest version of every mod each time it starts**, and a mod author's update can rename the mod's internal ID. When that happens, your server asks for an ID that no client can load and *everyone* fails to join with a mod mismatch. There is no way to pin a Workshop mod to a version — Steam only ever serves "latest" — so instead, check:
+
+```bash
+./scripts/check-mods.sh          # both checks below
+./scripts/check-mods.sh drift    # what will re-download on the next restart
+./scripts/check-mods.sh ids      # does every mod in MOD_IDS still resolve
+```
+
+Exit code 0 means clean. Run it from the repo root (the scripts `cd` there themselves, so it works from anywhere). Two moments matter:
+
+- **Before a restart** — `drift` asks Steam what's changed. `scripts/graceful-stop.sh` now does this for you automatically.
+- **After a restart that pulled something** — `ids` confirms nothing got renamed. If something did, it names the replacement ID to paste into `MOD_IDS` in `.env`.
+
+Then tell players to **fully restart Project Zomboid once** after any restart that pulled an update, so Steam refreshes their copy to the same version the server has. That's the whole player-side workflow.
+
 ## 🧹 Starting over
 
 ```bash
