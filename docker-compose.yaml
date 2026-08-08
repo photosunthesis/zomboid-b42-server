@@ -87,13 +87,15 @@ services:
     # Pinned to the B42 build this world was created on so a routine `pull` can't
     # drop in a save-incompatible patch. Bump deliberately (back up first).
     #
-    # 42.20.0-release = Build 42 STABLE, published 2026-07-29. Note the "-release"
-    # suffix: B42 graduated off the unstable branch, so the newest B42 no longer
-    # carries an "-unstable" tag. `:latest` and `:latest-release` also point here
-    # now — do NOT use either to mean "Build 41" anymore (that was true only while
-    # B42 was in beta). For Build 41 stable, pin 41.78.19-release explicitly.
-    # Previous pin: 42.19.0-unstable (its world was archived; 42.20 can't load it).
-    image: danixu86/project-zomboid-dedicated-server:42.20.0-release
+    # 42.20.2-release = Build 42 STABLE, image published 2026-08-06. Note the
+    # "-release" suffix: B42 graduated off the unstable branch, so the newest B42
+    # no longer carries an "-unstable" tag. `:latest` and `:latest-release` also
+    # point here now — do NOT use either to mean "Build 41" anymore (that was true
+    # only while B42 was in beta). For Build 41 stable, pin 41.78.19-release.
+    # Previous pins: 42.20.0-release (2026-07-29, same 42.20 save format — this was
+    # a patch-level bump, world kept); 42.19.0-unstable (world archived, 42.20
+    # can't load it).
+    image: danixu86/project-zomboid-dedicated-server:42.20.2-release
     container_name: ${NAME:-pz}
 
     # danixu86 publishes amd64 only. This pins amd64 regardless of host arch:

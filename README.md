@@ -87,7 +87,7 @@ The server is set to 8 GB, which is comfortable for a normal group. To change it
 
 ## 🔄 Updating
 
-The version is pinned in `docker-compose.yaml` (the `image:` line ends in `42.20.0-release`), so it won't change on its own. That's on purpose: a surprise Build 42 patch can break your save. To update when you're ready, back up `server-data/Zomboid` first, bump that tag to the newer build, then run:
+The version is pinned in `docker-compose.yaml` (the `image:` line ends in `42.20.2-release`), so it won't change on its own. That's on purpose: a surprise Build 42 patch can break your save. To update when you're ready, back up `server-data/Zomboid` first, bump that tag to the newer build, then run:
 
 ```bash
 docker compose pull && docker compose up -d --force-recreate
