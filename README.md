@@ -95,7 +95,7 @@ docker compose pull && docker compose up -d --force-recreate
 
 A patch-level bump leaves your world in `server-data/` untouched — but read the patch notes first. An update that adds **map content** invalidates existing saves outright, and then the world has to be regenerated rather than migrated. Keep backups.
 
-> **Build 42 is stable now.** As of `42.20.0` (released 2026-07-29) Build 42 ships on Steam's normal branch, so tags end in `-release`, not `-unstable`, and your friends need no beta opt-in — a stock, auto-updating client just connects.
+> **Build 42 is stable now.** Starting with `42.20.0` (released 2026-07-29), Build 42 ships on Steam's normal branch, so tags end in `-release`, not `-unstable`, and your friends need no beta opt-in — a stock, auto-updating client just connects.
 >
 > Two things this changed:
 > - `:latest` and `:latest-release` now mean **Build 42**, not Build 41. If you specifically want Build 41, pin `41.78.19-release` and have players select Steam's `legacy41` branch.
