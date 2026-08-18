@@ -12,3 +12,6 @@ server-data/
 
 # Logs
 *.log
+
+# Local world backups (tarballs, never committed)
+.backups/

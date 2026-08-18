@@ -1,80 +1,17 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Project Zomboid (Build 42) dedicated server + playit.gg tunnel.
+# Project Zomboid (Build 42) server + playit.gg tunnel, on two prebuilt images.
+# Setup and day-to-day use live in README.md. The comments here are only the
+# things you need to know before EDITING this file.
 #
-# TWO prebuilt images, NO custom build. Everything lives in this file + .env:
-#   • pz     — the game server (danixu86 image, Build 42 stable / "release" branch)
-#   • playit — the playit.gg tunnel agent on a private bridge network with pz; it
-#              forwards internet traffic to the server at pz's fixed container IP
-#              (172.28.0.10). No published host ports, no router port-forwarding.
+# Why this runs on Apple Silicon: the PZ server is x86-only and is installed by
+# SteamCMD, whose bootstrap is 32-bit x86 and does not emulate cleanly on ARM64.
+# This image bakes the server in at build time, so at runtime only the 64-bit
+# Java server runs. Setting FORCEUPDATE brings SteamCMD back at boot and with it
+# that whole problem.
 #
-# Runtime-agnostic: this is a standard Compose file. Bring it up with Docker,
-# OrbStack, or any other Compose-compatible runtime — the file doesn't care which.
-#
-# ── Why this runs on any CPU architecture ────────────────────────────────────
-# Project Zomboid's server is x86-only and is installed by SteamCMD, whose
-# bootstrap is a 32-bit x86 binary. Installing it is the fragile part — on ARM64
-# hosts (Apple Silicon, Raspberry Pi, ARM cloud) that 32-bit x86 bootstrap can't
-# be emulated cleanly. THIS image sidesteps that: the danixu86 image has the
-# server BAKED IN at build time (the SteamCMD install ran on danixu's amd64 CI,
-# not on your host). At runtime only the 64-bit Java server runs — no SteamCMD —
-# as long as FORCEUPDATE is unset. So the same image "just runs" everywhere:
-# native on x86-64 hosts, and under lightweight emulation on ARM64.
-#
-# ── Build 42 is now STABLE (as of 42.20.0, 2026-07-29) ───────────────────────
-# B42 left beta: 42.20.0 shipped to Steam's DEFAULT (public/stable) branch, so the
-# image line moved from "-unstable" to "-release" tags. Players no longer opt into
-# any beta branch — a stock, auto-updated client connects as-is. Still give it
-# plenty of RAM (8–9 GB+) and keep the group modest (Indie Stone suggests <= 20).
-#
-# SAVE COMPATIBILITY: 42.20 added map content, so worlds created on 42.19-unstable
-# CANNOT be loaded by 42.20 — that jump requires a fresh world (this server's
-# 42.19 world was archived and regenerated on 2026-07-29). Build 41 saves are
-# likewise incompatible. To finish an old 42.19 world instead, pin the previous
-# tag below AND have every player opt into Steam's "42.19" branch; for Build 41,
-# use the 41.78.19-release tag plus Steam's "legacy41" branch.
-#
-# ── Quick start ──────────────────────────────────────────────────────────────
-#   cp .env.example .env          # then edit it (playit key, passwords, ...)
-#   docker compose up -d          # pull images + start in the background
-#   docker compose logs -f        # watch the logs (first boot loads the world)
-#   docker compose down           # stop + remove containers (world data persists)
-#
-# ── How friends connect ──────────────────────────────────────────────────────
-# 1. In the playit.gg dashboard create ONE tunnel:
-#      Type = Project Zomboid  (or: Protocol UDP, Port Count 2)
-#      Local address = 172.28.0.10   Local port = 16261
-#    (172.28.0.10 = pz's fixed IP on the private bridge defined at the BOTTOM of
-#    this file. The agent has NO DNS, so this must be that literal IP — a service
-#    name like "pz" will NOT work. It used to be 127.0.0.1 when playit shared pz's
-#    network namespace; that's changed — update the dashboard to this IP.)
-#    playit gives you a public address like  something.playit.gg:PORT
-# 2. In-game: Join → Add Server / connect by IP → enter that host + public port,
-#    UNCHECK "Use Steam Relay", and join with your SERVER_PASSWORD.
-#    Give friends only the FIRST port; PZ uses the +1 port itself (that's why the
-#    tunnel covers 2 ports).
-#
-# ── UPDATING (new B42 patch) ─────────────────────────────────────────────────
-# The pz image tag below is now PINNED, so `docker compose pull` won't bump the
-# version on its own. To update: back up ./server-data/Zomboid, bump the pz image
-# tag below to the new build, then:
-#   docker compose pull && docker compose up -d --force-recreate
-# A patch-level bump leaves your world in ./server-data/ untouched. Check the patch
-# notes first, though: an update that adds MAP content invalidates existing saves
-# (that's what 42.19 -> 42.20 did), and then the world must be regenerated, not
-# migrated. If clients auto-update past the pinned tag they can't join until you
-# bump it — that controlled lag is the point of pinning.
-#
-# Do NOT "update" by setting FORCEUPDATE=True in .env on this host: that runs
-# SteamCMD at container start, whose 32-bit x86 bootstrap is exactly the part that
-# doesn't emulate cleanly on ARM64 (see the architecture note above). Bump the tag
-# instead — the whole point of this image is that the server files are baked in.
-#
-# NOTE: Compose reads .env from this directory for BOTH the ${...} substitutions
-# below AND the pz container's own environment (via env_file, format: raw).
-# ─────────────────────────────────────────────────────────────────────────────
+# Compose reads .env for BOTH the ${...} substitutions below AND the pz
+# container's own environment.
 
-# Cap Docker's json-file logs so a stack that runs for weeks can't fill the disk.
-# The default is unlimited size with no rotation. Both services share this anchor.
+# Without this, json-file logs grow forever and fill the disk.
 x-logging: &default-logging
   driver: json-file
   options:
@@ -83,98 +20,71 @@ x-logging: &default-logging
 
 services:
   pz:
-    # Prebuilt Build 42 server (server files baked in; no SteamCMD at runtime).
-    # Pinned to the B42 build this world was created on so a routine `pull` can't
-    # drop in a save-incompatible patch. Bump deliberately (back up first).
-    #
-    # 42.20.2-release = Build 42 STABLE, image published 2026-08-06. Note the
-    # "-release" suffix: B42 graduated off the unstable branch, so the newest B42
-    # no longer carries an "-unstable" tag. `:latest` and `:latest-release` also
-    # point here now — do NOT use either to mean "Build 41" anymore (that was true
-    # only while B42 was in beta). For Build 41 stable, pin 41.78.19-release.
-    # Previous pins: 42.20.0-release (2026-07-29, same 42.20 save format — this was
-    # a patch-level bump, world kept); 42.19.0-unstable (world archived, 42.20
-    # can't load it).
-    image: danixu86/project-zomboid-dedicated-server:42.20.2-release
+    # Pinned so a routine `pull` can't drop in a save-incompatible patch: a build
+    # that adds map content makes existing worlds unloadable, and clients can't
+    # join a server on a different build than theirs.
+    image: danixu86/project-zomboid-dedicated-server:42.20.3-release
     container_name: ${NAME:-pz}
 
-    # danixu86 publishes amd64 only. This pins amd64 regardless of host arch:
-    # a no-op (native) on x86-64 hosts, and emulation on ARM64 hosts.
+    # danixu86 publishes amd64 only, so pin it and let ARM64 hosts emulate.
     platform: linux/amd64
 
-    # Server config (name, passwords, ports, memory, mods) is injected from .env.
-    # `format: raw` passes every value LITERALLY — no ${...} interpolation, no
-    # quote-stripping — so a password with $, spaces, or quotes arrives exactly as
-    # written. Consequence: keep "# comments" on their OWN lines in .env, never
-    # trailing a KEY=VALUE line (the comment would become part of the value).
+    # `format: raw` passes values LITERALLY, so a password with $ or quotes
+    # arrives intact. The catch: a trailing "# comment" on a KEY=VALUE line in
+    # .env becomes part of the value.
     env_file:
       - path: .env
         format: raw
 
-    # Persistent data on the host — survives `down` and image updates.
-    #   Zomboid/  = your world, saves, server .ini, player DB, logs  ← BACK THIS UP
-    #   workshop/ = downloaded Steam Workshop mods (only used if you enable mods;
-    #               see MOD_IDS / WORKSHOP_IDS + FORCEUPDATE in .env)
-    # Do NOT mount anything onto the install dir (/home/steam/pz-dedicated) — the
-    # server is baked into the image there; a mount would hide it and break boot.
+    # Do NOT mount anything onto the install dir (/home/steam/pz-dedicated), the
+    # server is baked in there and a mount would hide it.
+    #
+    # Exception, if the game ever patches before danixu86 publishes a matching
+    # tag: pull the depots yourself and mount them over the install dir until the
+    # image catches up (done once for 42.20.3, undone a day later).
+    #   DepotDownloader -app 380870 -os linux -osarch 64 -dir server-install
+    # SteamCMD can NOT do that job on Apple Silicon: its 32-bit x86 bootstrap
+    # fails under Rosetta and segfaults under i386 emulation, both times exiting
+    # 0 having written nothing.
     volumes:
       - ./server-data/Zomboid:/home/steam/Zomboid
       - ./server-data/workshop:/home/steam/pz-dedicated/steamapps/workshop
 
-    # No `ports:` on purpose — playit reaches pz directly over the private bridge
-    # (at pz's fixed IP), so nothing needs publishing to the host. To ALSO allow
-    # same-LAN direct connections, uncomment these (the tunnel does not need them):
+    # Only for same-LAN direct connections. The playit tunnel doesn't need these;
+    # it reaches pz over the private bridge.
     ports:
       - "16261:16261/udp"
       - "16262:16262/udp"
 
-    # Fixed IP on the private bridge (see `networks:` at the BOTTOM of this file).
-    # playit forwards to THIS address; keeping it static means pz can crash, run
-    # out of memory and get killed, or be recreated for an image update without
-    # the tunnel's target ever changing. The PZ server already binds all interfaces (leave its bind
-    # address unset — do NOT set -ip/0.0.0.0, which PZ rejects), so it's reachable
-    # here. No ports: needed for playit — same-bridge containers reach every port.
+    # playit forwards to THIS address, so keeping it static means pz can crash,
+    # get OOM-killed, or be recreated for an image bump without the tunnel's
+    # target moving. Leave the PZ server's own bind address unset; it already
+    # binds every interface and rejects an explicit -ip/0.0.0.0.
     networks:
       tnc:
         ipv4_address: 172.28.0.10
 
-    # Resource caps. Keep CONTAINER_MEMORY comfortably above MAX_MEMORY in .env.
     mem_limit: ${CONTAINER_MEMORY:-16g}
     cpus: ${CONTAINER_CPUS:-8}
 
-    # Graceful-ish shutdown. Heads up: this image does NOT trap SIGTERM to force a
-    # save, so a plain `docker compose stop` relies on Project Zomboid's autosave
-    # (you may lose the last few minutes). For a GUARANTEED save, use the server
-    # console: `docker attach pz`, type  save  then  quit  (it saves and exits),
-    # or detach without stopping via Ctrl-P Ctrl-Q. stdin_open/tty enable that.
+    # This image does NOT trap SIGTERM to save, so a plain `stop` falls back to
+    # autosave and loses the last few minutes. Use scripts/graceful-stop.sh.
+    # stdin_open/tty exist so `docker attach pz` can reach the server console.
     stop_grace_period: ${STOP_GRACE:-120}s
     stdin_open: true
     tty: true
 
-    # `unless-stopped` = relaunch after a crash, a runtime restart, AND a host reboot,
-    # but stay down after a deliberate `docker compose stop`. This is the single
-    # biggest fix for "the server was offline / playit died overnight": the old
-    # `on-failure` did NOT relaunch after a clean stop or a reboot, so the stack
-    # stayed down until manually restarted. Two host-level requirements for reboot
-    # recovery to actually work, on ANY OS/runtime:
-    #   1. The container runtime must start on boot/login (a restart policy only fires
-    #      once the runtime is back up). Enable "start at login" for a desktop runtime,
-    #      or the equivalent service on a Linux host.
-    #   2. Keep the host awake — a sleeping machine suspends the whole runtime and NO
-    #      restart policy can help. Disable sleep in your OS power settings on any box
-    #      you leave running as a server.
-    # If your runtime doesn't auto-start this stack after ITS OWN restart, switch BOTH
-    # services to `restart: always` (the only downside: a manual `stop` won't persist
-    # across a runtime restart).
+    # `unless-stopped`, not `on-failure`, so the stack also comes back after a
+    # host reboot or a runtime restart and stays down only after a deliberate
+    # `stop`. Two host-side requirements: the container runtime has to start on
+    # boot/login, and the host must not sleep. Neither restart policy nor
+    # healthcheck can help a suspended machine.
     restart: unless-stopped
 
-    # ── Resilience + hardening (added) ───────────────────────────────────────
-    # Liveness signal. RCON (27015/tcp) only starts listening after the world
-    # finishes loading, so a passing check means "actually up", not just booting.
-    # The image ships bash but no netcat, so probe with bash's /dev/tcp builtin.
-    # Heads up: on standalone Docker/OrbStack an "unhealthy" status does NOT
-    # restart the container (the restart policy fires only when the process exits).
-    # This is for `docker ps` visibility; see the commented autoheal block to act on it.
+    # RCON only starts listening once the world has finished loading, so passing
+    # means "actually up" rather than "booting". The image has bash but no
+    # netcat. An unhealthy status does NOT restart anything on its own; that's
+    # what the autoheal sidecar below is for.
     healthcheck:
       test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/127.0.0.1/27015'"]
       interval: 30s
@@ -182,85 +92,61 @@ services:
       retries: 5
       start_period: 600s
 
-    # Block privilege escalation via setuid binaries. Safe here: the entrypoint's
-    # root -> steam `su` is a privilege DROP, which this flag doesn't touch.
+    # Safe despite the entrypoint's root -> steam `su`, which is a privilege DROP.
     security_opt:
       - no-new-privileges:true
 
-    # PZ uses ordinary UDP/TCP sockets, never raw sockets. Dropping NET_RAW also
-    # disables `ping` from inside the container (use nc/curl to debug the bridge).
+    # PZ never uses raw sockets. Side effect: no `ping` inside the container.
     cap_drop:
       - NET_RAW
 
-    # Bound the process/thread blast radius; give the JVM plenty of file handles.
-    # pids_limit counts THREADS, not processes, so keep it generous (an emulated
-    # JVM plus steam runs into the hundreds). Do NOT lower toward 512/1024 or the
-    # server can crash with "unable to create native thread".
+    # pids_limit counts THREADS, and an emulated JVM plus steam runs into the
+    # hundreds, so keep it generous or the server dies with "unable to create
+    # native thread".
     pids_limit: 4096
     ulimits:
       nofile:
         soft: 65536
         hard: 65536
 
-    # Reap orphaned children (the entrypoint su's to a child and never exec's).
-    # This does NOT change stop behavior: SIGTERM still isn't relayed to the JVM,
-    # so a guaranteed save still needs RCON `save` (see the `rcon` service below).
+    # Reap orphaned children; the entrypoint su's to a child and never exec's.
+    # Does not change stop behavior, SIGTERM still isn't relayed to the JVM.
     init: true
 
     logging: *default-logging
 
-    # Let the autoheal sidecar (below) restart pz if the healthcheck goes
-    # unhealthy. stop.timeout matches stop_grace_period; the restart is a SIGKILL
-    # after that (this image ignores SIGTERM), so a FALSE unhealthy costs progress
-    # back to the last autosave.
     labels:
       autoheal: "true"
       autoheal.stop.timeout: "120"
 
   playit:
-    # Official headless playit.gg agent, PINNED so a `docker compose pull` can't
-    # silently swap in a regressed build. 1.0.10 (2026-06-08) is the current, healthy
-    # release; bump deliberately after checking the tags on GitHub's Container
-    # Registry (GHCR). (Use :1.0 instead if you want automatic patch-level
-    # updates within the 1.0.x line.)
+    # Pinned so a `pull` can't swap in a regressed agent. Bump deliberately after
+    # checking the GHCR tags; :1.0 would track patches automatically.
     image: ghcr.io/playit-cloud/playit-agent:1.0.10
     container_name: ${NAME:-pz}-playit
 
-    # On the SAME private bridge as pz, but with its OWN network stack (no longer
-    # pz's namespace). It reaches the server at pz's fixed IP 172.28.0.10:16261 over
-    # the bridge and gets its own outbound internet to playit.gg. Decoupled lifecycle
-    # is the point: pz can restart/recreate without stranding the tunnel (the old
-    # `network_mode: service:pz` silently killed playit's networking whenever pz
-    # cycled, and no restart policy recovered it).
+    # Its own network stack, not pz's namespace. Decoupled lifecycle is the
+    # point: the old `network_mode: service:pz` killed playit's networking every
+    # time pz cycled, and no restart policy recovered it.
     networks:
       - tnc
 
-    # The agent's entrypoint maps SECRET_KEY -> `playitd --secret ...` and adds
-    # --platform-docker automatically. We feed it from PLAYIT_SECRET_KEY in .env.
     environment:
       SECRET_KEY: ${PLAYIT_SECRET_KEY}
-      # HARMLESS startup noise, NOT a failure: the two ERROR lines about
-      #   [2602:fbaf:...]:5525 "Network unreachable" / "failed to ping tunnel server"
-      # happen because this container has no IPv6, so the agent's first control-server
-      # candidate (always IPv6) fails instantly and it falls straight through to IPv4
-      # — which is why "playit connected; tunnels loaded" prints right after. There is
-      # no IPv4-only flag in the agent. To silence just those lines (note: this also
-      # hides genuine ping failures from that same module), uncomment:
+      # Startup noise, NOT a failure: the agent's first control-server candidate
+      # is always IPv6, this container has none, so it logs two ERROR lines and
+      # falls straight through to IPv4. There's no IPv4-only flag. Silencing it
+      # also hides genuine ping failures from that module:
       # PLAYIT_LOG: "info,playit_agent_core::agent_control::address_selector=off"
 
-    # Start pz first (ordering only — no longer a hard network dependency).
     depends_on:
       - pz
-    # Match pz: always-on, survives crashes / runtime restart / host reboot.
-    # See the pz `restart:` note above for the host requirements (any OS/runtime).
     restart: unless-stopped
 
-    # ── Hardening (added) ────────────────────────────────────────────────────
-    # The internet-facing tunnel is the piece most worth confining. It's a single
-    # outbound-only agent: it needs zero Linux capabilities and writes nothing to
-    # disk except its IPC socket under /run (so /run is a tmpfs and the rest is
-    # read-only). Verified against the pinned 1.0.10 agent. If a future image bump
-    # crash-loops at boot it started writing somewhere new; add a tmpfs line for it.
+    # The internet-facing piece is the one most worth confining. The agent is
+    # outbound-only and writes nothing but its IPC socket under /run. Verified
+    # against 1.0.10; if a future bump crash-loops it started writing somewhere
+    # new and needs another tmpfs.
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -270,17 +156,12 @@ services:
       - /run
     logging: *default-logging
 
-  # ── On-demand RCON (added; never autostarts) ────────────────────────────────
-  # The image doesn't save on SIGTERM, so a plain `stop` leans on autosave. This
-  # profile-gated helper flushes the world to disk on demand and never starts with
-  # `up` (profiles: [tools]). For a guaranteed-save stop:
-  #   docker compose run --rm rcon save    # flush world + player DB to disk
-  #   docker compose stop pz               # the kill is now harmless; save is on disk
-  # Don't use `quit`: pz is restart: unless-stopped, so a quit-exit looks like a
-  # crash and Docker relaunches pz before you can stop it. Confirm RCON is live with:
-  #   docker compose run --rm rcon players
-  # (RCONPASSWORD comes from .env via compose interpolation; if yours contains a
-  #  literal `$`, double it to `$$` here or the value won't match.)
+  # Flushes the world to disk on demand. Held behind a profile so it never starts
+  # with `up`. Normally you want scripts/graceful-stop.sh, which wraps this.
+  #   docker compose run --rm rcon save
+  #   docker compose run --rm rcon players   # confirm RCON is live
+  # Don't send `quit`: pz is restart: unless-stopped, so the exit reads as a crash
+  # and it comes straight back. If RCONPASSWORD contains a literal $, double it.
   rcon:
     image: outdead/rcon:latest
     profiles: ["tools"]
@@ -288,16 +169,11 @@ services:
       - tnc
     entrypoint: ["/rcon", "-a", "172.28.0.10:27015", "-p", "${RCONPASSWORD}"]
 
-  # ── Auto-restart a HUNG pz (autoheal) ───────────────────────────────────────
-  # restart: unless-stopped already covers a crash/OOM (the process exits and
-  # Docker relaunches it). The one gap it can't see is a server that's alive but
-  # deadlocked. autoheal watches pz's healthcheck and restarts pz when it goes
-  # "unhealthy". Two tradeoffs to know:
-  #   1. It mounts the Docker socket = root-equivalent access to the host.
-  #   2. The restart is a SIGKILL (this image ignores SIGTERM), so a FALSE unhealthy
-  #      loses progress back to the last autosave. The healthcheck's generous
-  #      start_period (600s) keeps a slow emulated boot reading as "starting", not dead.
-  # Scoped to the `autoheal: "true"` label on pz, so it only ever touches pz.
+  # restart: unless-stopped already handles a crash or OOM. The gap it can't see
+  # is a server that's alive but deadlocked, which is what this restarts. Two
+  # costs: it mounts the Docker socket (root-equivalent on the host), and the
+  # restart is a SIGKILL, so a FALSE unhealthy loses progress back to the last
+  # autosave. pz's 600s start_period keeps a slow emulated boot from tripping it.
   autoheal:
     image: willfarrell/autoheal:latest
     container_name: ${NAME:-pz}-autoheal
@@ -312,12 +188,10 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
-# ── Private bridge shared by pz + playit ─────────────────────────────────────
-# The explicit subnet is what lets pz claim a fixed ipv4_address (172.28.0.10)
-# that the playit tunnel targets. IPv4-only on purpose (container IPv6 is
-# inconsistent across runtimes/hosts). If 172.28.0.0/24 collides with another
-# network on your host, change it here AND update the tunnel's Local address in the
-# playit.gg dashboard to match.
+# The explicit subnet is what lets pz claim a fixed ipv4_address for playit to
+# target. IPv4-only because container IPv6 is inconsistent across hosts. If this
+# range collides with something on your host, change it here AND in the tunnel's
+# Local address on playit.gg.
 networks:
   tnc:
     driver: bridge

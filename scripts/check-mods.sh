@@ -1,54 +1,21 @@
 #!/usr/bin/env bash
 #
-# check-mods.sh — catch the two ways a Workshop mod update breaks your players,
-#                 BEFORE they hit it.
+# Catch the two ways a Workshop mod update breaks your players, before they hit
+# it: mods that will re-download on the next restart (drift), and MOD_IDS entries
+# that no longer resolve (ids). Usage is in README.md.
 #
-# WHY THIS EXISTS
-#   2026-08-03: WS 3629835761 ("Ladders?! B42.20") was restructured by its author
-#   into per-build folders, which RENAMED its mod id — Ladders42131 (42.16 folder,
-#   versionMax=42.19) became Ladders4220 (42.20 + common folders, versionMin=42.20).
-#   Our Mods= still asked for the old id, so on a 42.20 server it resolved to
-#   nothing:
-#       WARN : Mod  at ZomboidFileSystem.loadModAndRequired> required mod
-#              "Ladders42131" not found
-#   The server booted anyway and happily advertised a mod id no 42.20 client can
-#   produce either, so every client bounced on a mod mismatch. Nothing in the boot
-#   sequence treats that as fatal, and the warning is one line in a 1.1 MB log.
+# Why it exists: in 2026-08 a mod author restructured WS 3629835761 into
+# per-build folders, which RENAMED its mod id. The server booted fine, logged one
+# WARN in a 1.1 MB log, then advertised an id no client could produce, so every
+# client bounced on a mod mismatch. Nothing treats that as fatal.
 #
-#   The mods STAY on the Workshop on purpose: a Steam subscription is the only way
-#   clients get mods automatically. Freezing a copy into Zomboid/mods/ would pin the
-#   version, but then every player installs it by hand, forever — the opposite of
-#   easy. So instead of pinning (Steam has no API to request an older revision of a
-#   Workshop item anyway — WorkshopItems can only ever mean "latest"), this script
-#   makes the update itself safe to ride: it tells you what changed and whether the
-#   ids still resolve.
-#
-# WHAT IT CHECKS
-#   1. DRIFT   — asks Steam for each WORKSHOP_IDS item's current time_updated and
-#                compares it to what SteamCMD recorded locally. Anything newer
-#                upstream WILL re-download on the next restart, and players whose
-#                own Steam hasn't refreshed yet must relaunch PZ once afterwards.
-#                Run this BEFORE a restart to know who needs to do what.
-#   2. MOD IDS — walks every mod.info actually on disk, works out which ids are
-#                loadable on this server's build (respecting versionMin/versionMax
-#                and the per-build folder layout), and flags any MOD_IDS entry that
-#                won't resolve — naming the replacement id when the same mod folder
-#                now ships one. This is the check that would have caught the Ladders
-#                rename the moment it landed.
-#
-# USAGE
-#   ./scripts/check-mods.sh            # both checks
-#   ./scripts/check-mods.sh drift      # only "what will re-download on next restart"
-#   ./scripts/check-mods.sh ids        # only "does every MOD_IDS entry still resolve"
-#
-#   Exit code 0 = clean, 1 = something needs your attention. Safe to run while the
-#   server is up; it only reads files and queries Steam's public API (no key, no
-#   login). Run it after any restart whose log shows a fresh download.
+# Pinning isn't the fix: Steam only ever serves "latest", and freezing a copy into
+# Zomboid/mods/ means every player installs it by hand forever. So this makes the
+# update safe to ride instead.
 #
 set -euo pipefail
 
-# Run from the REPO ROOT (this script's parent): every path below — .env,
-# docker-compose.yaml, server-data/ — is relative to it.
+# Every path below is relative to the repo root.
 cd "$(dirname "$0")/.."
 
 MODE="${1:-all}"
@@ -96,13 +63,12 @@ def ver(s):
     return tuple(int(x) if x else 0 for x in m.groups()) if m else None
 
 
-# ── the mods actually on disk ────────────────────────────────────────────────
 def scan_disk(build):
     """Every mod.info under the workshop cache, with whether it loads on `build`.
 
-    B42 mods ship per-build subfolders (common/, 42/, 42.16/, 42.20/, ...). A
-    variant is live only if its own versionMin/versionMax bracket the build AND its
-    folder isn't for a build newer than ours.
+    B42 mods ship per-build subfolders (common/, 42/, 42.16/, ...), so a variant
+    is live only if its versionMin/versionMax bracket the build AND its folder
+    isn't for a newer build than ours.
     """
     found = []
     if not os.path.isdir(WORKSHOP):
@@ -162,8 +128,8 @@ def check_ids():
               % (mid, ".".join(map(str, build))))
         print('       ws %s, folder %s/%s, versionMin=%s versionMax=%s'
               % (e["ws"], e["folder"], e["verdir"], e["vmin"], e["vmax"]))
-        # The usual cause: the author added a new per-build folder under the SAME mod
-        # folder carrying a NEW id. Name it, because that's the fix.
+        # Usually the author added a per-build folder under the same mod folder
+        # carrying a new id. Name it, that's the fix.
         swaps = sorted({o["id"] for o in disk
                         if o["ws"] == e["ws"] and o["folder"] == e["folder"]
                         and o["live"] and o["id"] != mid})
@@ -184,15 +150,14 @@ def check_ids():
         print("          disk): %s" % ", ".join(orphans))
 
 
-# ── what will re-download on the next restart ───────────────────────────────
 def local_timeupdated():
     """wsid -> timeupdated, as SteamCMD recorded it in the .acf."""
     out = {}
     if not os.path.exists(ACF):
         return out
     text = open(ACF, encoding="utf-8", errors="replace").read()
-    # WorkshopItemsInstalled is the authoritative "what's on disk" block; it comes
-    # first, and a later block repeats each id with extra latest_* keys.
+    # WorkshopItemsInstalled is the block that says what's actually on disk. It
+    # comes first; a later block repeats each id with extra latest_* keys.
     block = text.split('"WorkshopItemsInstalled"', 1)[-1]
     for wsid, body in re.findall(r'"(\d{6,})"\s*\{([^}]*)\}', block):
         m = re.search(r'"timeupdated"\s*"(\d+)"', body)

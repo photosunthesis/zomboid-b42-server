@@ -1,22 +1,14 @@
 #!/usr/bin/env bash
 #
-# graceful-stop.sh — save the Project Zomboid world to disk, THEN stop the stack.
+# Save the world to disk, THEN stop the stack.
 #
-# WHY THIS EXISTS
-#   The danixu86 server image does NOT save on SIGTERM, so a plain
-#   `docker compose stop` hard-kills the game and rolls the world back to the last
-#   autosave / chunk-unload (this is what caused "items reset between restarts").
-#   This script forces a save FIRST via RCON, confirms it worked, and only then
-#   stops — so nothing is lost. See the notes in docker-compose.yaml.
-#
-# USAGE
-#   ./scripts/graceful-stop.sh    # save, then stop pz + playit + autoheal
-#   docker compose up -d          # bring it all back later
+# The server image does not save on SIGTERM, so a plain `docker compose stop`
+# hard-kills the game and rolls the world back to the last autosave. That was the
+# cause of "items reset between restarts".
 #
 set -euo pipefail
 
-# Run from the REPO ROOT (this script's parent), so `docker compose` always finds
-# docker-compose.yaml + .env no matter where you call the script from.
+# Every path below is relative to the repo root.
 cd "$(dirname "$0")/.."
 
 echo "==> Flushing the world to disk (RCON 'save')..."
@@ -30,8 +22,8 @@ else
   exit 1
 fi
 
-# Small buffer so the save fully flushes before the containers go down
-# (the server runs under emulation, so give it a moment).
+# Let the save finish flushing before the containers go down; the server runs
+# under emulation, so give it a moment.
 sleep 5
 
 echo "==> Stopping the stack (pz, playit, autoheal)..."
@@ -41,10 +33,9 @@ echo ""
 echo "==> Done. World is saved and the stack is stopped."
 echo "    Bring it back online with:  docker compose up -d"
 
-# A restart is exactly when Workshop mods get pulled fresh, and a mod update can
-# rename its mod id — which silently breaks every client (see check-mods.sh). So
-# report what the next boot will change WHILE you're still deciding to restart.
-# Informational only: never block the stop, and never fail the script.
+# A restart is when Workshop mods get pulled fresh, and an update can rename a
+# mod id and silently break every client. Report that while you're still deciding
+# to restart. Informational only, never blocks the stop.
 if [[ -x ./scripts/check-mods.sh ]]; then
   echo ""
   echo "==> Checking what the next start will pull from the Workshop..."
